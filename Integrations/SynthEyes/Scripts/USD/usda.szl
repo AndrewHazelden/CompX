@@ -1,0 +1,287 @@
+//SIZZLEX .usda USD ASCII Scene
+@[
+// 2021-08-11 06.00 PM
+// USD Exporter Sizzle Script Prototype
+// by Andrew Hazelden <andrew@andrewhazelden.com>
+// Inspired by the Maya and Fusion sizzle scripts
+
+
+// Installation
+// -------------
+// Copy the "usda.szl" script into the folder "SynthEyes/Scripts/USD/".
+// Note: You need to create the sub-folder "USD" as it doesn't exist by default
+
+
+// Todo List
+// ----------
+// - Export OBJ mesh vertex data into USDA file
+// - Support USD light primitives
+// - Support SynthEyes primitives color material export
+// - Dialog controls for automatically opening the exported .usda file in usdedit
+
+
+// Variables
+farClip = 10 // The far clip plane is many multiples of the world size
+axisMode = 1 // Use a "Maya-style" Y-Up axis
+geoPrimitives = 1 // Enable USD Geometric primitive export for sphere, cylinder, cone, and box meshes
+
+// Show a dialog
+dlg = NewDialog("usda")
+dlg.Check("geoPrimitives", "Translate Mesh Primitives", geoPrimitives)
+dlg.SetTip("geoPrimitives", "If set, translate the SynthEyes native mesh primitives into the corresponding USD primitive types for sphere, cylinder, cone, and box representations.")
+//dlg.Choice("rotOrder", "Rotation Order", (rotOrder ? "XYZ" : "ZXY"))
+//dlg.AddChoice("rotOrder", "XYZ")
+//dlg.AddChoice("rotOrder", "ZXY")
+//dlg.SetTip("rotOrder", "Use this rotation order for objects created in Maya")
+dlg.Float("farClip", "Far clipping plane multiple", 0.5, farClip, 100)
+dlg.SetTip("farClip", "Far clipping plane distance, as a multiple of the world size.")
+dlg.Show()
+
+// Results from dialog
+geoPrimitives = dlg.geoPrimitives
+farClip = dlg.farClip
+//rotOrder = (dlg.rotOrder == "XYZ" ? 1 : 0)
+
+Export()
+
+
+function Export()
+	active = Scene.activeObj
+
+	ExportHeader()
+	ExportConfig(active)
+
+	// Export Cameras
+	for (object in Obj)
+		ExportCamera(object)
+	end
+	
+	// Export Lights
+	for (object in Lite)
+		ExportLight(object)
+	end
+
+	// Export Meshes
+	for (object in Mesh)
+		ExportMesh(object)
+	end
+
+	ExportFooter()
+
+	Message("USD ASCII Export Complete!")
+end
+
+
+function ExportHeader()
+	"#usda 1.0\n"
+end
+
+function ExportConfig(object)
+	objName = NameClean(object.nm)
+	document = Scene.sourceFile
+
+	// Scene Scale
+	units = Scene.exportUnits
+	metersPerUnit = 1
+	if (units == "cm")
+		metersPerUnit = 0.01
+	elseif (units == "mm")
+		metersPerUnit = 0.001
+	elseif (units == "m")
+		metersPerUnit = 1
+	elseif (units == "km")
+		metersPerUnit = 1000
+	elseif (units == "in")
+		metersPerUnit = 0.0254
+	elseif (units == "ft")
+		metersPerUnit = 0.3048
+	elseif (units == "yd")
+		metersPerUnit = 0.9144
+	elseif (units == "mi")
+		metersPerUnit = 1609.344
+	end
+
+	// Sequence Range
+	firstFrame = object.shot.start
+	lastFrame = object.shot.stop
+	fps = object.shot.rate
+
+	"(\n"
+	"	defaultPrim = \"" objName "\"\n"
+	"	endTimeCode = " lastFrame "\n"
+	"	framesPerSecond = " fps "\n"
+	"	doc = \"\"\"" document "\"\"\"\n"
+	"	metersPerUnit = " metersPerUnit "\n"
+	"	startTimeCode = " firstFrame "\n"
+	"	timeCodesPerSecond = " fps "\n"
+	"	upAxis = \"Y\"\n"
+	")\n"
+	"def Xform \"SynthEyesGroup\" (\n"
+	"	kind = \"assembly\"\n"
+	")\n"
+	"{\n"
+end
+
+function ExportFooter()
+	"}\n"
+	"\n"
+end
+
+function ExportLight(object)
+	shot = object.shot
+	lightName = NameClean(object.nm)
+
+	// Should the light be exported?
+	if (object.isExported)
+		"	def Xform \"" lightName "\"\n"
+		"	{\n"
+		printf("\t\tfloat3 xformOp:rotateXYZ = (%lg, %lg, %lg)\n", object.rx, object.ry, object.rz);
+		printf("\t\tdouble3 xformOp:translate = (%lg, %lg, %lg)\n", object.x, object.y, object.z);
+		"		uniform token[] xformOpOrder = [\"xformOp:translate\", \"xformOp:rotateXYZ\"]\n"
+		"	}\n"
+	else
+		return
+	end
+end
+
+
+function ExportMesh(object)
+	shot = object.shot
+	meshName = NameClean(object.nm)
+
+	// Should the mesh be exported?
+	if (object.isExported)
+		if (geoPrimitives && object.kind == "Cylinder")
+			"	def Cylinder \"" meshName "\"\n"
+			"	{\n"
+			"		double radius = " 0.5 * object.sx "\n"
+			"		double height = " object.sz "\n"
+			"		uniform token axis = \"Y\"\n"
+			printf("\t\tfloat3[] extent = [(%lg, %lg, %lg), (%lg, %lg, %lg)]\n", object.sx * 0.5 * -1.0, object.sy * 0.5 * -1.0, object.sz * 0.5 * -1.0, object.sx * 0.5, object.sy * 0.5, object.sz * 0.5);
+		elseif (geoPrimitives && object.kind == "Cube")
+			"	def Cube \"" meshName "\"\n"
+			"	{\n"
+			"		double size = " object.sx "\n"
+			printf("\t\tfloat3[] extent = [(%lg, %lg, %lg), (%lg, %lg, %lg)]\n", object.sx * 0.5 * -1.0, object.sx * 0.5 * -1.0, object.sx * 0.5 * -1.0, object.sx * 0.5, object.sx * 0.5, object.sx * 0.5);
+//			printf("\t\tfloat3[] extent = [(%lg, %lg, %lg), (%lg, %lg, %lg)]\n", object.sx * 0.5 * -1.0, object.sy * 0.5 * -1.0, object.sz * 0.5 * -1.0, object.sx * 0.5, object.sy * 0.5, object.sz * 0.5);
+		elseif (geoPrimitives && object.kind == "Cone")
+			"	def Cone \"" meshName "\"\n"
+			"	{\n"
+			"		double radius = " 0.5 * object.sx "\n"
+			"		double height = " object.sz "\n"
+			"		uniform token axis = \"Y\"\n"
+			printf("\t\tfloat3[] extent = [(%lg, %lg, %lg), (%lg, %lg, %lg)]\n", object.sx * 0.5 * -1.0, object.sy * 0.5 * -1.0, object.sz * 0.5 * -1.0, object.sx * 0.5, object.sy * 0.5, object.sz * 0.5);
+		elseif (geoPrimitives && object.kind == "Disk")
+			"	def Xform \"" meshName "\"\n"
+			"	{\n"
+		elseif (geoPrimitives && object.kind == "Plane")
+			"	def Xform \"" meshName "\"\n"
+			"	{\n"
+		elseif (geoPrimitives && object.kind == "Sphere")
+			"	def Sphere \"" meshName "\"\n"
+			"	{\n"
+			"		double radius = " 0.5 * object.sx "\n"
+		elseif (geoPrimitives && object.kind == "Box")
+			"	def Cube \"" meshName "\"\n"
+			"	{\n"
+			"		double size = " object.sx "\n"
+			printf("\t\tfloat3[] extent = [(%lg, %lg, %lg), (%lg, %lg, %lg)]\n", object.sx * 0.5 * -1.0, object.sx * 0.5 * -1.0, object.sx * 0.5 * -1.0, object.sx * 0.5, object.sx * 0.5, object.sx * 0.5);
+//			printf("\t\tfloat3[] extent = [(%lg, %lg, %lg), (%lg, %lg, %lg)]\n", object.sx * 0.5 * -1.0, object.sy * 0.5 * -1.0, object.sz * 0.5 * -1.0, object.sx * 0.5, object.sy * 0.5, object.sz * 0.5);
+		elseif (geoPrimitives && object.kind == "Guy")
+			"	def Xform \"" meshName "\"\n"
+			"	{\n"
+		elseif (geoPrimitives && object.kind == "Custom")
+			"	def Xform \"" meshName "\"\n"
+			"	{\n"
+		else
+			"	def Xform \"" meshName "\"\n"
+			"	{\n"
+		end
+
+		printf("\t\tfloat3 xformOp:rotateXYZ = (%lg, %lg, %lg)\n", object.rx, object.ry, object.rz);
+		printf("\t\tdouble3 xformOp:translate = (%lg, %lg, %lg)\n", object.x, object.y, object.z);
+		"		uniform token[] xformOpOrder = [\"xformOp:translate\", \"xformOp:rotateXYZ\"]\n"
+		"	}\n"
+	else
+		return
+	end
+end
+
+function ExportCamera(object)
+	if (object.isCamera)
+		shot = object.shot
+		camName = NameClean(object.nm)
+		worldSize = object.worldSize
+		
+		// Sequence Range
+		firstFrame = object.shot.start
+		lastFrame = object.shot.stop
+		fps = object.shot.rate
+
+		// Camera Attributes
+		aperture = shot.backPlateWidth // in mm
+		horizontalAperture = aperture / 25.4
+		verticalAperture = aperture / 25.4 / shot.aspect
+		nearClip = worldSize * 0.001
+		farClip = worldSize * farClip
+		focalLength = 0.5 * aperture / tan(0.5 * object.fov)
+		focusDistance = worldSize * 0.05
+//		focusDistance = shot.metanum.focus
+		fStop = shot.metanum.fnumber
+
+
+		"	def Camera \"" camName "\"\n"
+		"	{\n"
+		"		float2 clippingRange = (" nearClip ", " farClip ")\n"
+		"		float focalLength = " focalLength "\n"
+		"		float focusDistance = " focusDistance "\n"
+		"		float fStop = " fStop "\n"
+		"		float horizontalAperture = " horizontalAperture "\n"
+		"		float verticalAperture = " horizontalAperture "\n"
+
+
+		// XYZ Rotation
+		"		float3 xformOp:rotateXYZ.timeSamples = {\n"
+		for (frame = firstFrame; frame <= lastFrame; frame++)
+			printf("\t\t\t%d: (%lg, %lg, %lg),\n", frame, object.rx, object.ry, object.rz);
+		end
+		"		}\n"
+
+
+		// XYZ Translation
+		"		double3 xformOp:translate.timeSamples = {\n"
+		for (frame = firstFrame; frame <= lastFrame; frame++)
+			printf("\t\t\t%d: (%lg, %lg, %lg),\n", frame, object.x, object.y, object.z);
+		end
+		"		}\n"
+		"		uniform token[] xformOpOrder = [\"xformOp:translate\", \"xformOp:rotateXYZ\"]\n"
+		"	}\n"
+	end
+end
+
+
+
+// Remove spaces and anything else problematic from names
+function NameClean(originalName)
+	newName = ""
+
+	for (chno = 1; chno <= length(originalName); chno++)
+		chr = substr(originalName, chno, 1)
+
+		if (index("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890_", chr) == 0)
+			newName = (newName "_")
+		else
+			newName = (newName chr)
+		end
+	end
+	
+	chr = substr(newName, 1, 1)
+	
+	if (chr >= "0" && chr <= "9")
+		newName = ("SE_" newName)
+	elseif (chr == "_")
+		newName = ("SE" newName)
+	end
+
+	return newName
+end
